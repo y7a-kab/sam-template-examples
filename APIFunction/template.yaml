@@ -1,0 +1,162 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: AWS SAM API Gateway Deploy Example
+
+# The API Gatweay created by SAM requires some method,
+# so also register a simple Lambda function.
+
+# usage example:
+#   sam build -u
+#   sam deploy -g --stack-name apigwex1-v1-dev --capabilities CAPABILITY_NAMED_IAM
+#
+# url example:
+#   https://${api-logical-id}.execute-api.ap-northeast-1.amazonaws.com/apigwex1-v1-dev/hello
+#
+# access command line exampl:
+#   curl -X GET ${YOUR-URL} -D - -H "Accept: application/json" -H "x-api-key:${YOUR-API-KEY}"
+#
+# Check the api-logical-id and api key from the API Gateway console.
+
+# About SAM Template Specification see:
+#   https://docs.aws.amazon.com/ja_jp/serverless-application-model/latest/developerguide/sam-specification-template-anatomy.html
+
+Parameters:
+  AppName:
+    Type: String
+    Default: apigwex1
+  Version:
+    Type: String
+    Default: v1
+  StageName:
+    Type: String
+    Default: dev
+
+Globals:
+  # Lambda
+  Function:
+    Runtime: python3.9
+    Timeout: 60
+    Tracing: Active
+    MemorySize: 128
+
+Resources:
+  #
+  # API Gateway declaration
+  #
+  # API Gateway to push execution and access logs to CloudWatch logs role
+  # See below.
+  # https://docs.aws.amazon.com/ja_jp/prescriptive-guidance/latest/patterns/automate-deployment-of-nested-applications-using-aws-sam.html
+  # https://serverless-observability.workshop.aws/en/050_logging/logging-producers/api_logs.html
+  ApiGatewayPushToCloudWatchLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AppName}-${Version}-${StageName}-ApiGatewayPushToCloudWatchLogsRole"
+      Description: "Push logs to CloudWatch logs from API Gateway"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - "apigateway.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+  # AWS::Logs::LogGroup
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/AccessLog-${AppName}-${Version}-${StageName}"
+      RetentionInDays: 365
+  # AWS::ApiGateway::Account
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayPushToCloudWatchLogsRole.Arn
+  # AWS::Serverless::Api
+  ExampleRestApi:
+    Type: AWS::Serverless::Api
+    DependsOn:
+      - ApiGatewayAccount
+    Properties:
+      Name: !Sub "${AppName}-${Version}-${StageName}"
+      # fix issue 191 see: https://github.com/aws/serverless-application-model/issues/191
+      OpenApiVersion: '3.0.1'
+      # If you use your own domain name, just use ${StageName}.
+      StageName: !Sub "${AppName}-${Version}-${StageName}"
+      Auth:
+        # Require API Key
+        ApiKeyRequired: true
+        UsagePlan:
+          UsagePlanName: DailyUsagePlan
+          CreateUsagePlan: PER_API
+          Description: This will limit 5000 executions per day and throttle executions on 10% of that.
+          # Quota: Configures the number of requests a user can make within a specified interval.
+          Quota:
+            # Maximum number of requests that can be executed in a specified time period.
+            Limit: 5000
+            # Valid Values: DAY | WEEK | MONTH
+            Period: DAY
+          # Throttle: Sets the overall request rate (average number of requests per second) and burst capacity.
+          Throttle:
+            # BurstLimit: Burst rate limit for API target requests.
+            BurstLimit: 100
+            # RateLimit: Steady-state rate limit for API target requests.
+            RateLimit: 50
+      MethodSettings:
+        # list of MethodSetting
+        -
+          HttpMethod: '*'
+          ResourcePath: '/*'
+          # INFO or ERROR
+          LoggingLevel: ERROR
+          # Data trace log to CloudWatch Logs
+          DataTraceEnabled: false
+          # CloudWatch metrics
+          MetricsEnabled: false
+      # X-Ray tracing
+      TracingEnabled: false
+      # Move under Properties
+      AccessLogSetting:
+        DestinationArn: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ApiAccessLogGroup}'
+        Format: '$context.identity.sourceIp $context.authorizer.claims.sub [$context.requestTime] "$context.httpMethod $context.resourcePath $context.protocol" $context.status $context.requestId $context.awsEndpointRequestId $context.xrayTraceId $context.responseLatency $context.integrationLatency "$context.error.message"'
+      Cors:
+        AllowOrigin: "'*'"
+        AllowMethods: "'OPTIONS,HEAD,GET,PUT,POST,DELETE,PATCH'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+  # Lambda Function
+  ExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AppName}-${Version}-${StageName}-ExampleFunction"
+      CodeUri: src/example_function
+      Handler: app.lambda_handler
+      Tracing: Active
+      Policies:
+        - CloudWatchPutMetricPolicy: {}
+      Events:
+        # API Method
+        Hello:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ExampleRestApi
+            Path: /hello
+            Method: get
+            # Require API Key
+            Auth:
+              ApiKeyRequired: true
+
+# Output messages
+Outputs:
+  ApiGatewayPushToCloudWatchLogsRole:
+    Description: "ApiGatewayPushToCloudWatchLogsRole."
+    Value: !GetAtt ApiGatewayPushToCloudWatchLogsRole.Arn
+  ApiAccessLogGroup:
+    Description: "API ACess Log CloudWatch Log Group."
+    Value: !GetAtt ApiAccessLogGroup.Arn
+  ExampleRestApi:
+    Description: "API Gateway REST API endpoint URL."
+    Value: !Sub "https://${ExampleRestApi}.execute-api.${AWS::Region}.amazonaws.com/${ExampleRestApiStage}/"
+  ExampleFunction:
+    Description: "ExampleFunction."
+    Value: !GetAtt ExampleFunction.Arn

@@ -1,0 +1,63 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: AWS Lambda Layer Deploy Example
+
+# usage example:
+#   sam build -u
+#   sam deploy -g --stack-name lambdaex1-v1-dev --capabilities CAPABILITY_NAMED_IAM
+
+# About SAM Template Specification see:
+#   https://docs.aws.amazon.com/ja_jp/serverless-application-model/latest/developerguide/sam-specification-template-anatomy.html
+
+Parameters:
+  AppName:
+    Type: String
+    Default: lambdaex1
+  Version:
+    Type: String
+    Default: v1
+  StageName:
+    Type: String
+    Default: dev
+
+Globals:
+  # Lambda
+  Function:
+    Runtime: python3.9
+    Timeout: 60
+    Tracing: Active
+    MemorySize: 128
+
+Resources:
+  # Lambda Layer
+  ExampleLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "${AppName}-${Version}-${StageName}-ExampleLayer"
+      ContentUri: src/layer
+      CompatibleRuntimes:
+        - python3.9
+    Metadata:
+      BuildMethod: python3.9
+  # Lambda Function
+  ExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AppName}-${Version}-${StageName}-ExampleFunction"
+      CodeUri: src/function/example_function
+      Handler: app.lambda_handler
+      Layers:
+        - !Ref ExampleLayer
+      Tracing: Active
+      Policies:
+        - CloudWatchPutMetricPolicy: {}
+
+# Output messages
+Outputs:
+  ExampleLayer:
+    Description: "ExampleLayer."
+    # note: LayerVersion can't use !GetAtt *.Arn
+    Value: !Ref ExampleLayer
+  ExampleFunction:
+    Description: "ExampleFunction."
+    Value: !GetAtt ExampleFunction.Arn

@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  AWS SAM DynamoDB Deploy Example
+
+# usage example:
+#   sam build
+#   sam deploy -g --stack-name dynamodbex1-v1-dev
+
+# About SAM Template Specification see:
+#   https://docs.aws.amazon.com/ja_jp/serverless-application-model/latest/developerguide/sam-specification-template-anatomy.html
+
+Parameters:
+  AppName:
+    Type: String
+    Default: dynamodbex1
+  Version:
+    Type: String
+    Default: v1
+  StageName:
+    Type: String
+    Default: dev
+
+# Globals:
+
+Resources:
+  #
+  # DynamoDB declaration
+  #
+  ExampleTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      # table definition
+      TableName: !Sub "${AppName}-${Version}-${StageName}-main"
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi01Pk
+          AttributeType: S
+        - AttributeName: gsi01Sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      ProvisionedThroughput:
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+      # GSI definition
+      GlobalSecondaryIndexes:
+        - IndexName: GenericGsi01
+          KeySchema:
+            - AttributeName: gsi01Pk
+              KeyType: HASH
+            - AttributeName: gsi01Sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
+      # Server Side Encryption
+      SSESpecification:
+        SSEEnabled: true
+
+# Output messages
+Outputs:
+  ExampleTable:
+    Description: "ExampleTable ARN"
+    Value: !GetAtt ExampleTable.Arn
